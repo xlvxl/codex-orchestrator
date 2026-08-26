@@ -92,18 +92,10 @@ fn draw_agent_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn draw_agent_pane(frame: &mut Frame<'_>, area: Rect, app: &App, task: &Task) {
-    let lane_label = if task.runtime.is_empty() {
-        task.lane.clone()
-    } else if task.runtime_target.is_empty() {
-        format!("{}@{}", task.lane, task.runtime)
-    } else {
-        format!("{}@{}[{}]", task.lane, task.runtime, task.runtime_target)
-    };
-    let title = format!(
-        " {} | {} | {} ",
-        fit_text(&lane_label, 24),
-        fit_text(task.display_title(), 24),
-        task.elapsed_label()
+    let title = agent_pane_title(
+        task,
+        area.width.saturating_sub(2) as usize,
+        &task.elapsed_label(),
     );
     let visible_height = area.height.saturating_sub(2) as usize;
     let empty = Vec::new();
@@ -119,6 +111,38 @@ fn draw_agent_pane(frame: &mut Frame<'_>, area: Rect, app: &App, task: &Task) {
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
+}
+
+fn agent_pane_title(task: &Task, width: usize, elapsed: &str) -> String {
+    let lane = fit_text(&task.lane, 10);
+    let model = task.model_display().replace(" / ", "/");
+    let mode = if task.mode.is_empty() {
+        "--"
+    } else {
+        &task.mode
+    };
+    let fixed_width = lane.chars().count() + mode.chars().count() + elapsed.chars().count() + 11;
+    let model_width = width.saturating_sub(fixed_width).clamp(8, 24);
+    let model = fit_text(&model, model_width);
+    let compact = format!(" {lane} · {model} · {mode} · {elapsed} ");
+    let spare = width.saturating_sub(compact.chars().count());
+    if spare < 11 {
+        return fit_text(&compact, width);
+    }
+    let detail = if task.runtime.is_empty() {
+        task.display_title().to_owned()
+    } else if task.runtime_target.is_empty() {
+        format!("{} @ {}", task.display_title(), task.runtime)
+    } else {
+        format!(
+            "{} @ {}[{}]",
+            task.display_title(),
+            task.runtime,
+            task.runtime_target
+        )
+    };
+    let task_title = fit_text(&detail, spare - 3);
+    format!(" {lane} · {model} · {mode} · {task_title} · {elapsed} ")
 }
 
 fn agent_grid_areas(area: Rect, count: usize) -> Vec<Rect> {
@@ -747,6 +771,25 @@ mod tests {
         assert!(panes[1].x < panes[2].x);
         assert!(panes[3].y > panes[0].y);
         assert!(panes[3].x < panes[4].x);
+    }
+
+    #[test]
+    fn agent_pane_title_keeps_model_visible_at_narrow_widths() {
+        let task = Task {
+            lane: "grok".to_owned(),
+            model: "grok-4.5 / high".to_owned(),
+            mode: "write".to_owned(),
+            title: "Implement ownership checks".to_owned(),
+            ..Task::default()
+        };
+
+        let narrow = agent_pane_title(&task, 38, "02:31");
+        assert!(narrow.contains("grok-4.5"));
+        assert!(narrow.contains("write"));
+        assert!(narrow.contains("02:31"));
+
+        let wide = agent_pane_title(&task, 100, "02:31");
+        assert!(wide.contains("Implement ownership checks"));
     }
 
     #[test]
