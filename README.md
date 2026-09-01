@@ -14,6 +14,8 @@ The optional terminal dashboard is a Rust binary. Build it with a current Rust t
 
 External CLIs (`grok`, `claude`, `agy`, `opencode`, `codex`) are optional. Use them only when you want a distinct model producer or explicitly ask for that lane.
 
+ChatGPT Web is an optional planning/review advisor. It requires Codex Desktop's built-in browser, `cloudflared`, and the pinned Codex with ChatGPT checkout installed by this project. It cannot implement code or run commands.
+
 If you request an external lane that is not installed or authenticated, the skill should stop and ask whether to install/configure that CLI or continue with Codex `worker` / `explorer` sub-agents.
 
 ## Structure
@@ -32,8 +34,11 @@ codex-orchestrator/
 │       ├── SKILL.md
 │       ├── agents/openai.yaml
 │       ├── references/broker-lanes.md
+│       ├── references/chatgpt-web.md
 │       └── scripts/
 │           ├── agent-output.mjs
+│           ├── c2c-advice.patch
+│           ├── chatgpt-web.mjs
 │           ├── codex-event-log.sh
 │           ├── herdr-lane.mjs
 │           ├── lane-runtime.sh
@@ -160,6 +165,7 @@ Each `watch` process is an independent read-only observer until you explicitly c
 - Uses five-part specs for delegated work: objective, files, interfaces, constraints, verification.
 - Supports worker and explorer sub-agents.
 - Supports optional external CLI lanes such as `grok`, `claude`, `agy`, `opencode`, `luna`, and `codex` when those tools are installed and authenticated.
+- Supports an optional ChatGPT Web planning/review lane through the built-in browser and a read-only C2C workspace connector.
 - Starts each external CLI lane through a non-model runtime selector.
 - Uses Herdr for persistent PTYs, workspaces, native windows, and event waits when its server is ready.
 - Keeps the shell supervisor available when Herdr is not in use.
@@ -181,6 +187,32 @@ Run the focused output-contract tests with:
 ```bash
 node --test tests/agent-output.test.mjs
 ```
+
+## ChatGPT Web Advisor
+
+ChatGPT Web is available only for planning and review. The integration pins an audited Codex with ChatGPT commit and applies a small patch that adds `submit_advice` plus a local `advice wait` command. The callback writes protocol output only; C2C remains unable to modify workspace files or execute commands.
+
+Check availability:
+
+```bash
+node skills/codex-orchestrator/scripts/chatgpt-web.mjs check
+```
+
+Install the pinned checkout after reviewing the requested dependencies:
+
+```bash
+node skills/codex-orchestrator/scripts/chatgpt-web.mjs install
+```
+
+Then invoke the skill naturally:
+
+```text
+$codex-orchestrator 让 ChatGPT Web 规划当前登录模块重构。
+$codex-orchestrator 让 ChatGPT Web review 当前未提交改动。
+$codex-orchestrator 先让 ChatGPT Web 规划，Grok 实现，再让 ChatGPT Web review。
+```
+
+The built-in browser sends the request once. `lane-runtime.sh` then waits on the local callback without browser polling or model turns, and `codex-orchestrator agents` shows the read lane as `chatgpt-web / ChatGPT Web / current` until it completes.
 
 ## External CLI Mode
 

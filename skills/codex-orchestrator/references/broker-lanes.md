@@ -35,6 +35,17 @@ Validate every spec first:
 
 The spec should normally be 4-8 KiB and cannot exceed 16 KiB. Pass workspace paths and search anchors instead of conversation history, logs, diffs, or large source blocks.
 
+## Efficient Agent Inspection
+
+An external producer keeps full access to its allowed workspace and tools. Improve throughput by removing duplicated discovery, not by imposing arbitrary tool, command, file, time, model, reasoning, or repository-read limits.
+
+- Include exact changed paths, symbols, direct callers, relevant tests, and facts already established by the main session in the spec. For substantial reusable evidence, write a separate file and pass its path; it is an initial index rather than the producer's only context.
+- Ask the producer to gather independent initial reads and searches together when practical, then reuse those results. It may inspect anything else needed when the evidence exposes a real gap.
+- Do not repeat an identical search, unchanged file range, or failed command unless files changed, output was incomplete, or a fresh run is needed for verification.
+- When a command fails deterministically, change the method or report the gap. In particular, do not repeatedly run a scoped test that cannot create its cache or temporary files inside a read-only lane; the main session can run that exact verification later with suitable permissions.
+
+Do not truncate required code or conceal omitted context to make an evidence file smaller. Record paths and line anchors for material not included so the producer can fetch it directly.
+
 Every start command must include these runtime arguments:
 
 ```bash
