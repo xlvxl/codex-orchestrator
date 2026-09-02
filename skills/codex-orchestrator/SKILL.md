@@ -155,7 +155,7 @@ Use the cheapest adequate lane:
 - Independent comparison: high-risk work where two implementations are useful to compare before choosing one.
 - External CLI lane: when the user asks for a specific external model or wants a non-Codex producer.
 - Advisor pass: commitment-boundary judgment, not implementation.
-- ChatGPT Web advisor: planning or read-only review through the built-in browser and patched C2C connector. Never use it as an implementation lane. Read [references/chatgpt-web.md](references/chatgpt-web.md) before setup or launch.
+- ChatGPT Web manual advisor: a user-mediated planning or review handoff through the visible built-in browser. It is not an Agent lane and must never automate page input or output. Read [references/chatgpt-web.md](references/chatgpt-web.md) before using it.
 
 When this skill is active, "agent" means the skill's preferred delegated agents unless the user says "Codex sub-agent", `worker`, or `explorer`. The preferred order is Grok first, Claude second, Antigravity third. Use Codex `worker` / `explorer` only when the user explicitly asks for Codex sub-agents, or after a requested preferred lane is unavailable and the user chooses Codex sub-agents instead.
 
@@ -191,7 +191,7 @@ Avoid sending multiple agents to edit the same files. If two independent impleme
 
 External CLIs are optional. The skill is fully functional with local Codex work and Codex `worker` / `explorer` sub-agents alone.
 
-ChatGPT Web is a separate optional advisor surface, not an external CLI producer. Use it only when the user names ChatGPT Web or explicitly chooses it for planning or review. Its setup, connector boundary, and no-model completion wait are defined in [references/chatgpt-web.md](references/chatgpt-web.md).
+ChatGPT Web manual mode is a separate optional advisor surface, not an external CLI producer or runtime lane. Use it only when the user names ChatGPT Web or explicitly chooses it for planning or review. Codex prepares the prompt and opens the visible page; the user manually sends it and pastes the final answer back into the current task. Do not use connectors, callbacks, browser output capture, runtime state, or polling for this mode. Read [references/chatgpt-web.md](references/chatgpt-web.md) before using it.
 
 When this skill is active and delegation is needed, external CLI lanes are the preferred delegated-agent producers. Use Grok first, Claude second, and Antigravity third unless the user names a different lane, explicitly asks for Codex sub-agents, or the work should stay local.
 

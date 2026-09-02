@@ -14,7 +14,7 @@ The optional terminal dashboard is a Rust binary. Build it with a current Rust t
 
 External CLIs (`grok`, `claude`, `agy`, `opencode`, `codex`) are optional. Use them only when you want a distinct model producer or explicitly ask for that lane.
 
-ChatGPT Web is an optional planning/review advisor. It requires Codex Desktop's built-in browser, `cloudflared`, and the pinned Codex with ChatGPT checkout installed by this project. It cannot implement code or run commands.
+ChatGPT Web manual mode is an optional planning/review handoff in Codex Desktop. It opens the visible ChatGPT page, but the user must manually send the prompt and paste the final answer back into the Codex task. It cannot implement code or run commands.
 
 If you request an external lane that is not installed or authenticated, the skill should stop and ask whether to install/configure that CLI or continue with Codex `worker` / `explorer` sub-agents.
 
@@ -37,14 +37,13 @@ codex-orchestrator/
 │       ├── references/chatgpt-web.md
 │       └── scripts/
 │           ├── agent-output.mjs
-│           ├── c2c-advice.patch
-│           ├── chatgpt-web.mjs
 │           ├── codex-event-log.sh
 │           ├── herdr-lane.mjs
 │           ├── lane-runtime.sh
 │           └── lane-supervisor.sh
 ├── tests/
-│   └── agent-output.test.mjs
+│   ├── agent-output.test.mjs
+│   └── chatgpt-web.test.mjs
 ├── README.md
 └── LICENSE
 ```
@@ -165,7 +164,7 @@ Each `watch` process is an independent read-only observer until you explicitly c
 - Uses five-part specs for delegated work: objective, files, interfaces, constraints, verification.
 - Supports worker and explorer sub-agents.
 - Supports optional external CLI lanes such as `grok`, `claude`, `agy`, `opencode`, `luna`, and `codex` when those tools are installed and authenticated.
-- Supports an optional ChatGPT Web planning/review lane through the built-in browser and a read-only C2C workspace connector.
+- Supports an optional ChatGPT Web manual planning/review handoff without connectors, tunnels, callbacks, or browser output capture.
 - Starts each external CLI lane through a non-model runtime selector.
 - Uses Herdr for persistent PTYs, workspaces, native windows, and event waits when its server is ready.
 - Keeps the shell supervisor available when Herdr is not in use.
@@ -188,21 +187,15 @@ Run the focused output-contract tests with:
 node --test tests/agent-output.test.mjs
 ```
 
-## ChatGPT Web Advisor
-
-ChatGPT Web is available only for planning and review. The integration pins an audited Codex with ChatGPT commit and applies a small patch that adds `submit_advice` plus a local `advice wait` command. The callback writes protocol output only; C2C remains unable to modify workspace files or execute commands.
-
-Check availability:
+Run the ChatGPT Web manual-boundary test with:
 
 ```bash
-node skills/codex-orchestrator/scripts/chatgpt-web.mjs check
+node --test tests/chatgpt-web.test.mjs
 ```
 
-Install the pinned checkout after reviewing the requested dependencies:
+## ChatGPT Web Manual Advisor
 
-```bash
-node skills/codex-orchestrator/scripts/chatgpt-web.mjs install
-```
+ChatGPT Web is available only as a manual planning and review handoff. Codex prepares a compact prompt and opens `https://chatgpt.com/` in the visible built-in browser. You manually paste and send the prompt, wait for the complete answer, then paste that answer back into the current Codex task.
 
 Then invoke the skill naturally:
 
@@ -212,7 +205,9 @@ $codex-orchestrator 让 ChatGPT Web review 当前未提交改动。
 $codex-orchestrator 先让 ChatGPT Web 规划，Grok 实现，再让 ChatGPT Web review。
 ```
 
-The built-in browser sends the request once. `lane-runtime.sh` then waits on the local callback without browser polling or model turns, and `codex-orchestrator agents` shows the read lane as `chatgpt-web / ChatGPT Web / current` until it completes.
+This mode does not automate typing, sending, page inspection, response capture, clipboard reads, or completion detection. It creates no Herdr or supervisor process and does not appear in `codex-orchestrator agents`. After you paste the answer back, Codex checks its claims against the workspace before using it.
+
+For unattended OpenAI planning or review, use an official OpenAI API integration. This project does not turn a ChatGPT Web subscription into an automated API.
 
 ## External CLI Mode
 
