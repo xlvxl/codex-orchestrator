@@ -7,6 +7,16 @@ description: Multi-agent orchestration for high-stakes Codex work. Use only when
 
 Use this skill to keep the main Codex session in the architect role: decide the shape of the work, write precise specs, delegate bounded implementation when useful, and accept only evidence-backed results.
 
+## Local Subscription-Only Policy
+
+Claude subscription workers are the preferred and default delegated workers. Every Claude lane must use `/home/vscode/.local/bin/claude-subscription-worker`: `default`/read work maps to Sonnet and `implementation`/write work maps to Opus.
+
+An independent Codex CLI worker is a fallback only after the Claude subscription launcher reports authentication failure, unavailable capacity, a monthly-spend limit, or another documented subscription-unavailability condition. The owner must authorize the fallback directly or through the accepted phased plan. Use a new `codex-subscription-fallback` lane and `/home/vscode/.local/bin/codex-subscription-worker`; `default`/read work maps to a fresh `gpt-5.6-sol` process and `implementation`/write work maps to a fresh `gpt-6-astra` process. Give it the same working directory and read/write isolation as the Claude worker it replaces.
+
+The fallback launcher requires signed-in ChatGPT authentication and removes API-key and provider overrides from its child environment. Never use `OPENAI_API_KEY`, OpenAI API billing, automatic credit purchases, access-token substitution, or another metered API fallback without separate explicit authorization. Never inspect, expose, print, hash, or record authentication material. Fail closed when neither subscription path is available.
+
+This local policy supersedes the general lane catalog below: Grok, Antigravity/Gemini, OpenCode, Luna, raw Claude, raw Codex, and every other external producer are disabled. The runtime selector enforces the enabled launchers, role/model mapping, and fallback authorization. Record the provider, model, delegated role, and Claude unavailability reason in every lane report. The lead retains Git integration, staging, commits, pushes, PR actions, external mutations, and acceptance unless an accepted plan explicitly grants otherwise. Start a correction loop only after an acceptance criterion fails; never iterate unconditionally.
+
 ## Operating Rule
 
 The main session owns requirements, decomposition, interface design, routing, and final verification. Implementation may be delegated when the user has explicitly asked for this skill, delegation, sub-agents, parallel work, or external model lanes.
@@ -20,12 +30,12 @@ Before choosing a route, reduce the task to first principles: user goal, hard co
 1. Inspect the repo enough to understand the target files, conventions, tests, current git state, and facts that control lane choice.
 2. Decide what stays local and what, if anything, can be delegated.
 3. For each delegated task, write the full five-part spec below.
-4. For every external CLI lane, use one main-session shell invocation that runs the bundled runtime selector `start` command and then enters `await`.
+4. For every external CLI lane, use one main-session shell invocation that runs the bundled runtime selector `start` command and then enters `await`. Route to Claude first; use the Codex subscription fallback only under the local policy above.
 5. Use worker sub-agents for bounded code changes; use explorer sub-agents for narrow read-only questions.
 6. Keep the launch receipt inside that shell invocation so the main model resumes only after `await` returns.
 7. When `await` returns terminal state and result, require `final_available=true`, then review changes before integrating them. Producer exit code `0` alone is not completion evidence.
 8. Run the scoped verification command yourself.
-9. Report only what the diff and verification evidence support.
+9. Report only what the diff and verification evidence support, including which provider and model performed each delegated role and why any fallback occurred.
 
 ## Five-Part Spec
 
@@ -288,7 +298,9 @@ The adapter keeps a capped raw event file while the lane runs. It deletes that f
 
 Grok note: inherited MCP startup warnings are not terminal evidence if the lane prints task progress or a final response. Prefer disabling inherited Cursor/Claude MCP discovery for code tasks. Prefer `--no-subagents` so Grok remains a single external producer under one broker lane. Do not report `STATUS: unavailable` from MCP warnings alone. Quiet output is not enough to stop it.
 
-Claude Code note: use `--output-format stream-json --include-partial-messages --verbose` so the dashboard can display emitted thinking and tool activity. Use `--model sonnet --effort high` unless the user asks for a different Claude model or effort such as `max`.
+Claude Code note: every lane must use `/home/vscode/.local/bin/claude-subscription-worker`. Read/default lanes use `--role default` (Sonnet); write, implementation, and coding lanes use `--role implementation` (Opus). The launcher verifies Claude Max, sanitizes provider credentials and overrides, rejects authentication/model/fallback overrides, and fails closed. Use `--output-format stream-json --include-partial-messages --verbose` so the dashboard can display emitted thinking and tool activity. Do not invoke the raw `claude` executable.
+
+Codex subscription fallback note: launch a new `codex-subscription-fallback` task only after the Claude lane is terminal and the fallback is authorized. Use `/home/vscode/.local/bin/codex-subscription-worker`, pass the eligible normalized `--fallback-reason` and `--fallback-authorization owner|accepted-plan`, and start a fresh non-resumed process. Read/default lanes use `--role default` (`gpt-5.6-sol`); write/implementation lanes use `--role implementation` (`gpt-6-astra`). The launcher verifies `codex login status` reports ChatGPT sign-in, ignores user provider configuration, removes API credentials from the child environment, and makes the session ephemeral. Do not invoke raw `codex`, reuse a Codex session, or continue through API-key authentication.
 
 Antigravity note: `agy --print` consumes the token immediately after `--print` as the prompt. Put the prompt immediately after `--print` or `-p`, then pass `--mode`, `--model`, and permission flags. Do not pipe the spec through stdin for `agy` print mode unless the installed CLI explicitly documents stdin support. For headless read-only work, always combine `--mode plan` with `--dangerously-skip-permissions`; plan mode keeps the lane in review posture while automatic approval lets it read files and run inspection commands without an unavailable prompt. Add `--print-timeout 15m` so repository reviews are not cut off by the five-minute default. State the no-edit contract in the spec and inspect the working-directory diff after the lane exits. Before starting or retrying, check whether the same Antigravity task still has a live process or session; do not stack a duplicate lane on top of active work. If the output says a tool required permission and was auto-denied, classify the attempt as invocation setup failure rather than a review result. If an `agy` response explains `--mode`, `--print-timeout`, or CLI usage instead of reading the repo/task, treat that lane attempt as an invocation setup failure and rerun once with the prompt-first form.
 
@@ -296,13 +308,13 @@ OpenCode note: use `opencode run --format json --thinking`; use `--agent plan` f
 
 ### Model Selection
 
-If the user names a model, pass the model flag for that CLI. If the user names a Claude effort, pass that effort. If the user does not name a model, use `grok-4.5` for Grok, `sonnet` for Claude, and `gemini-3.6-flash-high` for Antigravity. OpenCode uses its current configured model unless the user names one.
+The subscription-only role mapping is fixed: Claude uses Sonnet for default/read and Opus for implementation/write; an authorized Codex fallback uses `gpt-5.6-sol` for default/read and `gpt-6-astra` for implementation/write. Do not accept model or provider overrides for these lanes.
 
 `luna` is a fixed alias, not an unspecified model request. Always pass `--model gpt-5.6-luna`, `-c 'model_reasoning_effort="max"'`, and `-c 'service_tier="priority"'`.
 
 Always use the event-stream and output-adapter commands in [references/broker-lanes.md](references/broker-lanes.md). Do not replace them with plain-text output commands because that merges live observation with the final result and leaves Claude quiet while it works.
 
-Claude uses `--model sonnet --effort high` by default for this skill's Claude lane unless the user asks for another Claude model or effort such as `max`. For the `agy` lane, use `gemini-3.6-flash-high` unless the user names another Antigravity model.
+The mandatory subscription launchers supply their required models. Do not pass `--model`, `--fallback-model`, alternate settings sources, or provider configuration. General lane templates below remain upstream reference material but are disabled by the local policy.
 
 Gemini is an Antigravity `agy` request. Use `agy --model "<Gemini model>"` for Gemini requests. Never select an Antigravity Claude model; route Claude requests to the Claude CLI lane instead.
 
@@ -353,7 +365,7 @@ Before reporting completion:
 - Run the narrowest relevant tests and format checks yourself, limited to the changed scope.
 - Do not run all tests or a full-repository format check without explicit user permission.
 - If no scoped command exists, ask before using a broader command and report the unverified gap until permission is granted.
-- If verification fails, either fix locally if the issue is small and within scope, or send a corrected spec back to the worker.
+- If an acceptance criterion fails, either fix locally if the issue is small and within scope, or send a corrected spec back to the worker. Do not run a correction iteration before a demonstrated failure.
 - If verification cannot be run, state exactly why and what manual inspection was performed.
 - For an external agent, confirm that the process, session, and active tool state are terminal before treating its final text as completion evidence.
 

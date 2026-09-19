@@ -1,5 +1,11 @@
 # External CLI Lanes
 
+Local policy enables only the preferred Claude subscription lane and an
+owner- or accepted-plan-authorized ChatGPT Codex subscription fallback. The
+runtime selector rejects Grok, Gemini/Antigravity, OpenCode, Luna, raw Claude,
+raw Codex, and every other external lane. If both enabled subscription paths
+are unavailable, stop.
+
 Launch external CLI lanes through the bundled runtime selector. The main session writes one bounded spec, starts the lane, blocks once in `await`, and verifies the final diff. Herdr owns the PTY when its server is available; the existing shell supervisor remains available when it is not. Neither runtime uses model tokens.
 
 ## Shared Setup
@@ -78,18 +84,71 @@ Grok sessions are fresh unless the user explicitly requests continuation. For th
 
 ### Claude
 
+Every Claude lane must use the mandatory subscription launcher. It verifies a
+Claude Max login, removes provider credentials and overrides only from the
+worker environment, rejects model/auth/fallback overrides, and fails closed.
+Use `default`/Sonnet for read lanes and `implementation`/Opus for write lanes.
+
 ```bash
 "$RUNTIME" start \
   --lane claude --cwd "$CWD" --spec "$SPEC" \
   --state-dir "$STATE_DIR" --result-source "$FINAL" --ephemeral-watch \
-  --title "$TITLE" --model-label "sonnet / high" --mode read -- \
+  --title "$TITLE" --model-label "sonnet / Claude Max / preferred" --mode read -- \
   node "$ADAPTER" --format claude --watch "$WATCH" --final "$FINAL" \
   --diagnostic "$DIAGNOSTIC" --stdin-file "$SPEC" -- \
-  claude -p --model sonnet --effort high --verbose \
+  /home/vscode/.local/bin/claude-subscription-worker --role default \
+  -p --effort high --verbose \
   --output-format stream-json --include-partial-messages
 ```
 
-For write work add `--permission-mode bypassPermissions`.
+For write work change the runtime metadata to `--model-label "opus / Claude
+Max / preferred" --mode write`, change the launcher role to `--role implementation`, and
+add `--permission-mode bypassPermissions`. The launcher supplies the model.
+Do not pass `--model`, `--fallback-model`, alternate settings sources, or the
+raw `claude` executable. Retries and resumes use the same launcher.
+
+### ChatGPT Codex Subscription Fallback
+
+Use this lane only after a Claude task is terminal with an eligible
+subscription-unavailability result and the owner or accepted plan authorizes
+fallback. Normalize the evidence as one of `authentication_failure`,
+`capacity_unavailable`, `monthly_spend_limit`, or `subscription_unavailable`.
+Record that reason with the provider, model, and role in the lane report.
+
+Before launch, confirm the route without reading authentication material:
+
+```bash
+"$SKILL_DIR/scripts/subscription-policy.sh" route \
+  --role default --claude-status "$FALLBACK_REASON" \
+  --fallback-authorization "$FALLBACK_AUTHORIZATION" --codex-auth chatgpt
+```
+
+Then launch a separate fresh Codex process:
+
+```bash
+"$RUNTIME" start \
+  --lane codex-subscription-fallback --cwd "$CWD" --spec "$SPEC" \
+  --state-dir "$STATE_DIR" --result-source "$FINAL" --ephemeral-watch \
+  --title "$TITLE" \
+  --model-label "gpt-5.6-sol / ChatGPT subscription / fallback:$FALLBACK_REASON" \
+  --mode read -- \
+  node "$ADAPTER" --format codex --watch "$WATCH" --final "$FINAL" \
+  --diagnostic "$DIAGNOSTIC" --stdin-file "$SPEC" -- \
+  /home/vscode/.local/bin/codex-subscription-worker --role default \
+  --fallback-authorization "$FALLBACK_AUTHORIZATION" \
+  --fallback-reason "$FALLBACK_REASON" \
+  --json --output-last-message "$FINAL" \
+  --sandbox read-only --cd "$CWD" -
+```
+
+For implementation work use `--role implementation`, `--model-label
+"gpt-6-astra / ChatGPT subscription / fallback:$FALLBACK_REASON"`, `--mode
+write`, and replace `--sandbox read-only` with
+`--dangerously-bypass-approvals-and-sandbox`. The launcher
+adds `--ephemeral`, fixes the model, ignores user provider configuration,
+requires ChatGPT sign-in, and sanitizes API credentials only in the child
+environment. Do not resume a prior Codex session, invoke raw `codex`, or use an
+API key, access token, automatic credit purchase, or metered provider fallback.
 
 ### Gemini Through Antigravity
 

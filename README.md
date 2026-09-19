@@ -14,6 +14,8 @@ The optional terminal dashboard is a Rust binary. Build it with a current Rust t
 
 External CLIs (`grok`, `claude`, `agy`, `opencode`, `codex`) are optional. Use them only when you want a distinct model producer or explicitly ask for that lane.
 
+This installation's subscription-only policy narrows those general capabilities: Claude Max workers are preferred, while a signed-in ChatGPT Codex worker is available only as an explicitly authorized fallback for documented Claude subscription unavailability. It never falls back to OpenAI API billing or another metered provider.
+
 ChatGPT Web manual mode is an optional planning/review handoff in Codex Desktop. It opens the visible ChatGPT page, but the user must manually send the prompt and paste the final answer back into the Codex task. It cannot implement code or run commands.
 
 If you request an external lane that is not installed or authenticated, the skill should stop and ask whether to install/configure that CLI or continue with Codex `worker` / `explorer` sub-agents.
@@ -39,11 +41,18 @@ codex-orchestrator/
 │           ├── agent-output.mjs
 │           ├── codex-event-log.sh
 │           ├── herdr-lane.mjs
+│           ├── install-subscription-workers.sh
 │           ├── lane-runtime.sh
-│           └── lane-supervisor.sh
+│           ├── lane-supervisor.sh
+│           ├── subscription-policy.sh
+│           ├── claude-subscription-worker
+│           ├── codex-subscription-worker
+│           └── llm-agent-env-sanitizer
 ├── tests/
 │   ├── agent-output.test.mjs
-│   └── chatgpt-web.test.mjs
+│   ├── chatgpt-web.test.mjs
+│   ├── lane-runtime.test.mjs
+│   └── subscription-policy.test.mjs
 ├── README.md
 └── LICENSE
 ```
@@ -61,6 +70,7 @@ git clone <your-repo-url> /tmp/codex-orchestrator
 mkdir -p ~/.codex/skills
 rm -rf ~/.codex/skills/codex-orchestrator
 cp -R /tmp/codex-orchestrator/skills/codex-orchestrator ~/.codex/skills/codex-orchestrator
+~/.codex/skills/codex-orchestrator/scripts/install-subscription-workers.sh
 ```
 
 Restart Codex, then invoke:
@@ -192,6 +202,24 @@ Run the ChatGPT Web manual-boundary test with:
 ```bash
 node --test tests/chatgpt-web.test.mjs
 ```
+
+Run the focused runtime and subscription-policy tests with:
+
+```bash
+node --test tests/lane-runtime.test.mjs tests/subscription-policy.test.mjs
+```
+
+Validate the skill package itself with:
+
+```bash
+python /path/to/skill-creator/scripts/quick_validate.py skills/codex-orchestrator
+```
+
+## Subscription Worker Policy
+
+`claude-subscription-worker` is the default launcher: read/default work maps to Sonnet and implementation/write work maps to Opus. A `codex-subscription-fallback` lane is allowed only after Claude reports authentication failure, unavailable capacity, a monthly-spend limit, or another documented subscription-unavailability condition, and only with direct owner or accepted-plan authorization. It maps read/default work to a fresh GPT-5.6 Sol process and implementation/write work to a fresh GPT-6 Astra process.
+
+Both launchers sanitize provider credentials only in the child process, verify the required subscription login without exposing credential material, and reject model or provider overrides. The Codex launcher requires `codex login status` to report ChatGPT sign-in, ignores user provider configuration, and starts an ephemeral non-resumed session. If neither subscription path is available, the workflow stops.
 
 ## ChatGPT Web Manual Advisor
 
