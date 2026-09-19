@@ -67,6 +67,140 @@ check_start_state_dir() {
   fi
 }
 
+check_subscription_launch() {
+  lane_name=
+  lane_mode=
+  model_label=
+  command_section=0
+  found_claude_wrapper=0
+  found_codex_wrapper=0
+  expect_lane=0
+  expect_mode=0
+  expect_model_label=0
+  expect_role=0
+  expect_fallback_authorization=0
+  expect_fallback_reason=0
+  worker_role=
+  fallback_authorization=
+  fallback_reason=
+
+  for argument in "$@"; do
+    if [ "$command_section" -eq 0 ]; then
+      case "$argument" in
+        --lane) expect_lane=1; continue ;;
+        --mode) expect_mode=1; continue ;;
+        --model-label) expect_model_label=1; continue ;;
+        --) command_section=1; continue ;;
+      esac
+      if [ "$expect_lane" -eq 1 ]; then lane_name=$argument; expect_lane=0; continue; fi
+      if [ "$expect_mode" -eq 1 ]; then lane_mode=$argument; expect_mode=0; continue; fi
+      if [ "$expect_model_label" -eq 1 ]; then model_label=$argument; expect_model_label=0; continue; fi
+      continue
+    fi
+
+    if [ "$expect_role" -eq 1 ]; then
+      worker_role=$argument
+      expect_role=0
+      continue
+    fi
+    if [ "$expect_fallback_authorization" -eq 1 ]; then
+      fallback_authorization=$argument
+      expect_fallback_authorization=0
+      continue
+    fi
+    if [ "$expect_fallback_reason" -eq 1 ]; then
+      fallback_reason=$argument
+      expect_fallback_reason=0
+      continue
+    fi
+
+    case "$argument" in
+      /home/vscode/.local/bin/claude-subscription-worker)
+        found_claude_wrapper=1
+        ;;
+      /home/vscode/.local/bin/codex-subscription-worker)
+        found_codex_wrapper=1
+        ;;
+      --role)
+        if [ "$found_claude_wrapper" -eq 1 ] || [ "$found_codex_wrapper" -eq 1 ]; then
+          expect_role=1
+        fi
+        ;;
+      --fallback-authorization)
+        if [ "$found_codex_wrapper" -eq 1 ]; then expect_fallback_authorization=1; fi
+        ;;
+      --fallback-reason)
+        if [ "$found_codex_wrapper" -eq 1 ]; then expect_fallback_reason=1; fi
+        ;;
+      claude|*/claude|*/claude.exe)
+        printf '%s\n' 'Claude lanes may not invoke the raw Claude executable.' >&2
+        exit 78
+        ;;
+      codex|*/codex|*/codex.exe)
+        printf '%s\n' 'Codex fallback lanes may not invoke the raw Codex executable.' >&2
+        exit 78
+        ;;
+    esac
+  done
+
+  if [ "$expect_role" -eq 1 ] || [ "$expect_fallback_authorization" -eq 1 ] \
+    || [ "$expect_fallback_reason" -eq 1 ]; then
+    printf '%s\n' 'Subscription launcher option is missing its value.' >&2
+    exit 64
+  fi
+
+  case "$lane_name" in
+    claude)
+      if [ "$found_claude_wrapper" -ne 1 ] || [ "$found_codex_wrapper" -ne 0 ]; then
+        printf '%s\n' 'Claude lanes require /home/vscode/.local/bin/claude-subscription-worker.' >&2
+        exit 78
+      fi
+      case "$lane_mode:$worker_role" in
+        read:default) expected_model_label='sonnet / Claude Max / preferred' ;;
+        write:implementation) expected_model_label='opus / Claude Max / preferred' ;;
+        *)
+          printf 'Claude lane contract mismatch: mode=%s role=%s model=%s\n' \
+            "$lane_mode" "$worker_role" "$model_label" >&2
+          exit 78
+          ;;
+      esac
+      if [ "$model_label" != "$expected_model_label" ]; then
+        printf 'Claude lane model label must be: %s\n' "$expected_model_label" >&2
+        exit 78
+      fi
+      ;;
+    codex-subscription-fallback)
+      if [ "$found_codex_wrapper" -ne 1 ] || [ "$found_claude_wrapper" -ne 0 ]; then
+        printf '%s\n' 'Codex fallback lanes require /home/vscode/.local/bin/codex-subscription-worker.' >&2
+        exit 78
+      fi
+      case "$lane_mode:$worker_role" in
+        read:default) expected_model=gpt-5.6-sol ;;
+        write:implementation) expected_model=gpt-6-astra ;;
+        *)
+          printf 'Codex fallback contract mismatch: mode=%s role=%s model=%s\n' \
+            "$lane_mode" "$worker_role" "$model_label" >&2
+          exit 78
+          ;;
+      esac
+      expected_model_label="$expected_model / ChatGPT subscription / fallback:$fallback_reason"
+      if [ "$model_label" != "$expected_model_label" ]; then
+        printf 'Codex fallback model label must be: %s\n' "$expected_model_label" >&2
+        exit 78
+      fi
+      "$script_dir/subscription-policy.sh" route \
+        --role "$worker_role" \
+        --claude-status "$fallback_reason" \
+        --fallback-authorization "$fallback_authorization" \
+        --codex-auth chatgpt >/dev/null
+      ;;
+    *)
+      printf 'External lane disabled by subscription-only policy: %s\n' "$lane_name" >&2
+      exit 78
+      ;;
+  esac
+}
+
 requested_runtime=${CODEX_ORCHESTRATOR_RUNTIME:-auto}
 action=${1-}
 selected_runtime=
@@ -94,6 +228,13 @@ if [ "$action" = "producer-session" ]; then
     exit 1
   fi
   printf '%s\n' "$session_id"
+  exit 0
+fi
+
+if [ "$action" = "check-launch" ]; then
+  shift
+  check_subscription_launch "$@"
+  printf '%s\n' 'LAUNCH_POLICY_OK'
   exit 0
 fi
 
@@ -146,6 +287,7 @@ fi
 if [ "$action" = "start" ]; then
   shift
   check_start_state_dir "$@"
+  check_subscription_launch "$@"
   set -- start "$@"
 fi
 

@@ -1,0 +1,61 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+sanitizer="$script_dir/llm-agent-env-sanitizer"
+claude_bin=/usr/bin/claude
+
+if [ "${1-}" != "--role" ] || [ -z "${2-}" ]; then
+  printf '%s\n' 'usage: claude-subscription-worker --role default|implementation [CLAUDE_ARGS...]' >&2
+  exit 64
+fi
+
+role=$2
+shift 2
+case "$role" in
+  default) required_model=sonnet ;;
+  implementation) required_model=opus ;;
+  *)
+    printf 'unsupported Claude worker role: %s\n' "$role" >&2
+    exit 64
+    ;;
+esac
+
+verify_only=0
+if [ "${1-}" = "--verify-only" ]; then
+  verify_only=1
+  shift
+  if [ "$#" -ne 0 ]; then
+    printf '%s\n' '--verify-only does not accept Claude arguments.' >&2
+    exit 64
+  fi
+fi
+
+for argument in "$@"; do
+  case "$argument" in
+    --model|--model=*|--fallback-model|--fallback-model=*|--settings|--settings=*|--managed-settings|--managed-settings=*|--setting-sources|--setting-sources=*)
+      printf 'blocked Claude worker override: %s\n' "$argument" >&2
+      exit 64
+      ;;
+  esac
+done
+
+auth_json=$($sanitizer "$claude_bin" auth status --json) || {
+  printf '%s\n' 'Claude subscription authentication check failed; worker not started.' >&2
+  exit 78
+}
+
+if ! printf '%s' "$auth_json" | jq -e \
+  '.loggedIn == true and .authMethod == "claude.ai" and .subscriptionType == "max"' \
+  >/dev/null 2>&1; then
+  printf '%s\n' 'Claude Max authentication is required; worker not started.' >&2
+  exit 78
+fi
+
+if [ "$verify_only" -eq 1 ]; then
+  printf 'role=%s model=%s auth=claude.ai subscription=max fallback=disabled\n' \
+    "$role" "$required_model"
+  exit 0
+fi
+
+exec "$sanitizer" "$claude_bin" --model "$required_model" "$@"

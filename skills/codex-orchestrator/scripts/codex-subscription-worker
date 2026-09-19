@@ -1,0 +1,138 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+sanitizer="$script_dir/llm-agent-env-sanitizer"
+policy="$script_dir/subscription-policy.sh"
+
+if [ "${1-}" != "--role" ] || [ -z "${2-}" ]; then
+  printf '%s\n' 'usage: codex-subscription-worker --role default|implementation --fallback-authorization owner|accepted-plan --fallback-reason REASON [CODEX_EXEC_ARGS...]' >&2
+  exit 64
+fi
+
+role=$2
+shift 2
+case "$role" in
+  default) required_model=gpt-5.6-sol ;;
+  implementation) required_model=gpt-6-astra ;;
+  *)
+    printf 'unsupported Codex worker role: %s\n' "$role" >&2
+    exit 64
+    ;;
+esac
+
+fallback_authorization=
+fallback_reason=
+verify_only=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --fallback-authorization)
+      fallback_authorization=${2-}
+      shift 2
+      ;;
+    --fallback-reason)
+      fallback_reason=${2-}
+      shift 2
+      ;;
+    --verify-only)
+      verify_only=1
+      shift
+      ;;
+    *) break ;;
+  esac
+done
+
+if [ -z "$fallback_authorization" ] || [ -z "$fallback_reason" ]; then
+  printf '%s\n' 'Codex fallback requires explicit authorization and an eligible Claude unavailability reason.' >&2
+  exit 78
+fi
+
+codex_bin=$(command -v codex 2>/dev/null || true)
+if [ -z "$codex_bin" ]; then
+  printf '%s\n' 'Codex CLI is unavailable; fallback worker not started.' >&2
+  exit 78
+fi
+
+auth_status=$($sanitizer "$codex_bin" login status 2>&1) || {
+  printf '%s\n' 'Codex subscription authentication check failed; fallback worker not started.' >&2
+  exit 78
+}
+if [ "$auth_status" != "Logged in using ChatGPT" ]; then
+  printf '%s\n' 'Signed-in ChatGPT authentication is required; API-key fallback is forbidden.' >&2
+  exit 78
+fi
+
+"$policy" route \
+  --role "$role" \
+  --claude-status "$fallback_reason" \
+  --fallback-authorization "$fallback_authorization" \
+  --codex-auth chatgpt >/dev/null
+
+if [ "$verify_only" -eq 1 ]; then
+  if [ "$#" -ne 0 ]; then
+    printf '%s\n' '--verify-only does not accept Codex arguments.' >&2
+    exit 64
+  fi
+  printf 'role=%s model=%s auth=chatgpt fallback=true reason=%s authorization=%s fresh=true\n' \
+    "$role" "$required_model" "$fallback_reason" "$fallback_authorization"
+  exit 0
+fi
+
+sandbox_mode=
+cwd_seen=0
+expect_sandbox=0
+expect_cwd=0
+for argument in "$@"; do
+  if [ "$expect_sandbox" -eq 1 ]; then
+    sandbox_mode=$argument
+    expect_sandbox=0
+    continue
+  fi
+  if [ "$expect_cwd" -eq 1 ]; then
+    cwd_seen=1
+    expect_cwd=0
+    continue
+  fi
+  case "$argument" in
+    --model|-m|--model=*|-m=*|--oss|--local-provider|--local-provider=*|--profile|-p|--profile=*|-p=*|--config|-c|--config=*|-c=*|--ignore-user-config|--worktree|resume|fork)
+      printf 'blocked Codex worker override: %s\n' "$argument" >&2
+      exit 64
+      ;;
+    --sandbox|-s)
+      expect_sandbox=1
+      ;;
+    --sandbox=*|-s=*)
+      sandbox_mode=${argument#*=}
+      ;;
+    --dangerously-bypass-approvals-and-sandbox)
+      sandbox_mode=danger-full-access
+      ;;
+    --cd|-C)
+      expect_cwd=1
+      ;;
+    --cd=*|-C=*)
+      cwd_seen=1
+      ;;
+  esac
+done
+
+if [ "$expect_sandbox" -eq 1 ] || [ "$expect_cwd" -eq 1 ]; then
+  printf '%s\n' 'Codex worker received an option without its required value.' >&2
+  exit 64
+fi
+if [ "$cwd_seen" -ne 1 ]; then
+  printf '%s\n' 'Codex fallback must receive the Claude lane working directory via --cd.' >&2
+  exit 64
+fi
+case "$role:$sandbox_mode" in
+  default:read-only|implementation:danger-full-access) ;;
+  *)
+    printf 'Codex fallback isolation mismatch: role=%s sandbox=%s\n' "$role" "${sandbox_mode:-unset}" >&2
+    exit 64
+    ;;
+esac
+
+exec "$sanitizer" "$codex_bin" exec \
+  --ignore-user-config --ephemeral \
+  -c 'forced_login_method="chatgpt"' \
+  --model "$required_model" "$@"
