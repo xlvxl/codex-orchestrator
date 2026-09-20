@@ -3,7 +3,136 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 sanitizer="$script_dir/llm-agent-env-sanitizer"
-claude_bin=/usr/bin/claude
+
+# Backward-compatible executable used when no trusted configuration is present.
+default_claude_bin=/usr/bin/claude
+
+# Fixed, owner-controlled trusted configuration. The location is a literal path
+# beneath $HOME/.config. XDG_CONFIG_HOME is deliberately NOT honored: honoring
+# it would let an environment variable redirect the launcher to an attacker
+# chosen configuration file, and the launcher must never accept a flag or
+# environment variable that selects the configuration location or executable.
+trusted_config="$HOME/.config/codex-orchestrator/claude-executable"
+
+# Only current-user installation root that may host a manager-pinned Claude.
+# Deliberately narrow: not $HOME, /usr/local, PATH entries, or arbitrary roots.
+nvm_node_root="$HOME/.nvm/versions/node"
+
+current_uid=$(id -u)
+
+fail_config() {
+  printf 'Trusted Claude configuration rejected: %s\n' "$1" >&2
+  exit 64
+}
+
+file_owner_uid() {
+  stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null
+}
+
+file_mode_bits() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
+# Resolve the Claude executable, validating the trusted configuration when it
+# exists and failing closed on anything unsafe. Sets the global claude_bin.
+resolve_claude_bin() {
+  # No trusted configuration object (regular file or dangling symlink): keep the
+  # backward-compatible executable without additional validation.
+  if [ ! -e "$trusted_config" ] && [ ! -L "$trusted_config" ]; then
+    claude_bin=$default_claude_bin
+    return 0
+  fi
+
+  # The configuration object must be a regular file, never a symlink or special
+  # file, so it cannot be redirected or substituted underneath us.
+  if [ -L "$trusted_config" ]; then
+    fail_config 'configuration must be a regular file, not a symlink'
+  fi
+  if [ ! -f "$trusted_config" ]; then
+    fail_config 'configuration must be a regular file'
+  fi
+
+  # The configuration must be owned by the effective current user.
+  cfg_uid=$(file_owner_uid "$trusted_config") || fail_config 'unable to stat configuration'
+  [ -n "$cfg_uid" ] || fail_config 'unable to determine configuration owner'
+  [ "$cfg_uid" = "$current_uid" ] || fail_config 'configuration must be owned by the current user'
+
+  # The configuration must not be group- or world-writable.
+  cfg_mode=$(file_mode_bits "$trusted_config") || fail_config 'unable to read configuration permissions'
+  [ -n "$cfg_mode" ] || fail_config 'unable to read configuration permissions'
+  if [ "$(( 0$cfg_mode & 022 ))" -ne 0 ]; then
+    fail_config 'configuration must not be group- or world-writable'
+  fi
+
+  # Exactly one nonempty line: capture the first line and reject any extra line.
+  configured=
+  current_line=
+  lines_read=0
+  while IFS= read -r current_line || [ -n "$current_line" ]; do
+    lines_read=$((lines_read + 1))
+    if [ "$lines_read" -eq 1 ]; then
+      configured=$current_line
+    else
+      fail_config 'configuration must contain exactly one line'
+    fi
+  done < "$trusted_config"
+
+  [ "$lines_read" -eq 1 ] || fail_config 'configuration must contain exactly one nonempty line'
+  [ -n "$configured" ] || fail_config 'configuration path must not be empty'
+
+  # Strict character allowlist: rejects surrounding or embedded whitespace,
+  # control characters, shell metacharacters, and any additional tokens.
+  case "$configured" in
+    *[!A-Za-z0-9._/-]*) fail_config 'configuration path contains unsupported characters' ;;
+  esac
+
+  # Must be an absolute path without parent-directory traversal segments.
+  case "$configured" in
+    /*) ;;
+    *) fail_config 'configuration path must be absolute' ;;
+  esac
+  case "/$configured/" in
+    */../*) fail_config 'configuration path must not contain ".." segments' ;;
+  esac
+
+  # The configured entry must live within the supported nvm node root.
+  case "$configured/" in
+    "$nvm_node_root"/*) ;;
+    *) fail_config 'configuration path is outside the supported nvm installation root' ;;
+  esac
+
+  # The configured entry must exist and be executable before resolution.
+  [ -e "$configured" ] || fail_config 'configured executable does not exist'
+  [ -x "$configured" ] || fail_config 'configured executable is not executable'
+
+  # Resolve symlinks to the real target. realpath -e fails on broken or looping
+  # links and canonicalizes escaping links so containment can be re-verified.
+  resolved=$(realpath -e -- "$configured" 2>/dev/null) \
+    || fail_config 'configured executable could not be resolved (broken or looping symlink)'
+  [ -n "$resolved" ] || fail_config 'configured executable could not be resolved'
+
+  # The resolved target must remain within the supported nvm node root.
+  case "$resolved/" in
+    "$nvm_node_root"/*) ;;
+    *) fail_config 'resolved executable escapes the supported nvm installation root' ;;
+  esac
+
+  # The resolved target must be a regular, executable file owned by the user.
+  [ -f "$resolved" ] || fail_config 'resolved executable is not a regular file'
+  [ -x "$resolved" ] || fail_config 'resolved executable is not executable'
+  tgt_uid=$(file_owner_uid "$resolved") || fail_config 'unable to stat resolved executable'
+  [ -n "$tgt_uid" ] || fail_config 'unable to determine resolved executable owner'
+  [ "$tgt_uid" = "$current_uid" ] || fail_config 'resolved executable must be owned by the current user'
+
+  # The resolved target must not be group- or world-writable.
+  tgt_mode=$(file_mode_bits "$resolved") || fail_config 'unable to read resolved executable permissions'
+  [ -n "$tgt_mode" ] || fail_config 'unable to read resolved executable permissions'
+  if [ "$(( 0$tgt_mode & 022 ))" -ne 0 ]; then
+    fail_config 'resolved executable must not be group- or world-writable'
+  fi
+
+  claude_bin=$resolved
+}
 
 if [ "${1-}" != "--role" ] || [ -z "${2-}" ]; then
   printf '%s\n' 'usage: claude-subscription-worker --role default|implementation [CLAUDE_ARGS...]' >&2
@@ -40,6 +169,8 @@ for argument in "$@"; do
   esac
 done
 
+resolve_claude_bin
+
 auth_json=$($sanitizer "$claude_bin" auth status --json) || {
   printf '%s\n' 'Claude subscription authentication check failed; worker not started.' >&2
   exit 78
@@ -53,8 +184,8 @@ if ! printf '%s' "$auth_json" | jq -e \
 fi
 
 if [ "$verify_only" -eq 1 ]; then
-  printf 'role=%s model=%s auth=claude.ai subscription=max fallback=disabled\n' \
-    "$role" "$required_model"
+  printf 'role=%s model=%s auth=claude.ai subscription=max fallback=disabled executable=%s\n' \
+    "$role" "$required_model" "$claude_bin"
   exit 0
 fi
 
