@@ -75,6 +75,8 @@ check_subscription_launch() {
   lane_mode=
   model_label=
   command_section=0
+  worker_section=0
+  first_command=1
   found_claude_wrapper=0
   found_codex_wrapper=0
   expect_lane=0
@@ -100,6 +102,28 @@ check_subscription_launch() {
       if [ "$expect_model_label" -eq 1 ]; then model_label=$argument; expect_model_label=0; continue; fi
       continue
     fi
+
+    # The first command may be the reviewed event adapter. Its arguments
+    # include `--format claude`; only the command after its `--` is the worker.
+    # A raw CLI as the first command is still refused.
+    if [ "$first_command" -eq 1 ]; then
+      first_command=0
+      case "$argument" in
+        "$trusted_bin/claude-subscription-worker"|"$trusted_bin/codex-subscription-worker")
+          worker_section=1
+          ;;
+        claude|*/claude|*/claude.exe)
+          printf '%s\n' 'Claude lanes may not invoke the raw Claude executable.' >&2
+          exit 78
+          ;;
+        codex|*/codex|*/codex.exe)
+          printf '%s\n' 'Codex fallback lanes may not invoke the raw Codex executable.' >&2
+          exit 78
+          ;;
+      esac
+    fi
+    if [ "$argument" = "--" ]; then worker_section=1; continue; fi
+    if [ "$worker_section" -ne 1 ]; then continue; fi
 
     if [ "$expect_role" -eq 1 ]; then
       worker_role=$argument

@@ -142,6 +142,8 @@ test("runtime accepts only the fixed subscription launch contracts", () => {
       "--",
       "node",
       "adapter.mjs",
+      "--format",
+      "claude",
       "--",
       path.join(trustedBin, "claude-subscription-worker"),
       "--role",
