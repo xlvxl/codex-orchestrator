@@ -10,6 +10,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scripts = path.join(root, "skills/codex-orchestrator/scripts");
 const policy = path.join(scripts, "subscription-policy.sh");
 const runtime = path.join(scripts, "lane-runtime.sh");
+const trustedBin = path.join(os.homedir(), ".local", "bin");
 
 function route(...args) {
   return spawnSync(policy, ["route", ...args], { encoding: "utf8" });
@@ -142,7 +143,7 @@ test("runtime accepts only the fixed subscription launch contracts", () => {
       "node",
       "adapter.mjs",
       "--",
-      "/home/vscode/.local/bin/claude-subscription-worker",
+      path.join(trustedBin, "claude-subscription-worker"),
       "--role",
       "default",
     ],
@@ -162,7 +163,7 @@ test("runtime accepts only the fixed subscription launch contracts", () => {
       "node",
       "adapter.mjs",
       "--",
-      "/home/vscode/.local/bin/codex-subscription-worker",
+      path.join(trustedBin, "codex-subscription-worker"),
       "--role",
       "implementation",
       "--fallback-authorization",
@@ -193,6 +194,20 @@ test("runtime accepts only the fixed subscription launch contracts", () => {
   assert.equal(codex.status, 0);
   assert.equal(rawCodex.status, 78);
   assert.match(rawCodex.stderr, /may not invoke the raw Codex executable/);
+
+  const wrongRoot = spawnSync(runtime, [
+    "check-launch", "--lane", "claude", "--mode", "read",
+    "--model-label", "sonnet / Claude Max / preferred", "--",
+    "/tmp/claude-subscription-worker", "--role", "default",
+  ], { encoding: "utf8" });
+  assert.equal(wrongRoot.status, 78);
+
+  const codespace = spawnSync(runtime, [
+    "check-launch", "--lane", "claude", "--mode", "read",
+    "--model-label", "sonnet / Claude Max / preferred", "--",
+    "/home/vscode/.local/bin/claude-subscription-worker", "--role", "default",
+  ], { encoding: "utf8", env: { ...process.env, HOME: "/home/vscode" } });
+  assert.equal(codespace.status, 0);
 });
 
 test("Codex launcher uses fresh ChatGPT-authenticated sessions and strips API credentials", () => {
@@ -261,4 +276,15 @@ test("Codex launcher uses fresh ChatGPT-authenticated sessions and strips API cr
   assert.match(run.stdout, /arg=--ignore-user-config/);
   assert.match(run.stdout, /arg=gpt-5\.6-sol/);
   assert.doesNotMatch(run.stdout, /arg=resume|arg=fork/);
+});
+
+
+test("installer defaults to the current user's bin without a Linux home", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "orchestrator-install-home-"));
+  const installed = spawnSync("sh", [path.join(scripts, "install-subscription-workers.sh")], {
+    encoding: "utf8", env: { ...process.env, HOME: home },
+  });
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.equal(fs.existsSync(path.join(home, ".local/bin/claude-subscription-worker")), true);
+  assert.equal(fs.existsSync(path.join(home, ".local/bin/codex-subscription-worker")), true);
 });

@@ -105,9 +105,10 @@ resolve_claude_bin() {
   [ -e "$configured" ] || fail_config 'configured executable does not exist'
   [ -x "$configured" ] || fail_config 'configured executable is not executable'
 
-  # Resolve symlinks to the real target. realpath -e fails on broken or looping
-  # links and canonicalizes escaping links so containment can be re-verified.
-  resolved=$(realpath -e -- "$configured" 2>/dev/null) \
+  # The entry's existence was checked above. GNU and macOS realpath both
+  # resolve symlinks with this form; broken and looping links fail closed.
+  # The configured path is absolute, so it cannot be parsed as an option.
+  resolved=$(realpath "$configured" 2>/dev/null) \
     || fail_config 'configured executable could not be resolved (broken or looping symlink)'
   [ -n "$resolved" ] || fail_config 'configured executable could not be resolved'
 

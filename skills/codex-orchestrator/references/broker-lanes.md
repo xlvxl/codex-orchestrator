@@ -96,7 +96,7 @@ Use `default`/Sonnet for read lanes and `implementation`/Opus for write lanes.
   --title "$TITLE" --model-label "sonnet / Claude Max / preferred" --mode read -- \
   node "$ADAPTER" --format claude --watch "$WATCH" --final "$FINAL" \
   --diagnostic "$DIAGNOSTIC" --stdin-file "$SPEC" -- \
-  /home/vscode/.local/bin/claude-subscription-worker --role default \
+  "$HOME/.local/bin/claude-subscription-worker" --role default \
   -p --effort high --verbose \
   --output-format stream-json --include-partial-messages
 ```
@@ -134,7 +134,7 @@ Then launch a separate fresh Codex process:
   --mode read -- \
   node "$ADAPTER" --format codex --watch "$WATCH" --final "$FINAL" \
   --diagnostic "$DIAGNOSTIC" --stdin-file "$SPEC" -- \
-  /home/vscode/.local/bin/codex-subscription-worker --role default \
+  "$HOME/.local/bin/codex-subscription-worker" --role default \
   --fallback-authorization "$FALLBACK_AUTHORIZATION" \
   --fallback-reason "$FALLBACK_REASON" \
   --json --output-last-message "$FINAL" \

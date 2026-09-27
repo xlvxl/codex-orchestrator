@@ -68,6 +68,9 @@ check_start_state_dir() {
 }
 
 check_subscription_launch() {
+  # The reviewed installer places launchers in the current user's private bin.
+  # On Codespaces HOME is /home/vscode; on macOS it is a user-local path.
+  trusted_bin="$HOME/.local/bin"
   lane_name=
   lane_mode=
   model_label=
@@ -115,10 +118,10 @@ check_subscription_launch() {
     fi
 
     case "$argument" in
-      /home/vscode/.local/bin/claude-subscription-worker)
+      "$trusted_bin/claude-subscription-worker")
         found_claude_wrapper=1
         ;;
-      /home/vscode/.local/bin/codex-subscription-worker)
+      "$trusted_bin/codex-subscription-worker")
         found_codex_wrapper=1
         ;;
       --role)
@@ -152,7 +155,7 @@ check_subscription_launch() {
   case "$lane_name" in
     claude)
       if [ "$found_claude_wrapper" -ne 1 ] || [ "$found_codex_wrapper" -ne 0 ]; then
-        printf '%s\n' 'Claude lanes require /home/vscode/.local/bin/claude-subscription-worker.' >&2
+        printf 'Claude lanes require %s/claude-subscription-worker.\n' "$trusted_bin" >&2
         exit 78
       fi
       case "$lane_mode:$worker_role" in
@@ -171,7 +174,7 @@ check_subscription_launch() {
       ;;
     codex-subscription-fallback)
       if [ "$found_codex_wrapper" -ne 1 ] || [ "$found_claude_wrapper" -ne 0 ]; then
-        printf '%s\n' 'Codex fallback lanes require /home/vscode/.local/bin/codex-subscription-worker.' >&2
+        printf 'Codex fallback lanes require %s/codex-subscription-worker.\n' "$trusted_bin" >&2
         exit 78
       fi
       case "$lane_mode:$worker_role" in

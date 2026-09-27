@@ -2,7 +2,7 @@
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-target_dir=/home/vscode/.local/bin
+target_dir="$HOME/.local/bin"
 
 if [ "${1-}" = "--target-dir" ] && [ -n "${2-}" ] && [ "$#" -eq 2 ]; then
   target_dir=$2
