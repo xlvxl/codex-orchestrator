@@ -68,10 +68,15 @@ check_start_state_dir() {
 }
 
 check_subscription_launch() {
+  # The reviewed installer places launchers in the current user's private bin.
+  # On Codespaces HOME is /home/vscode; on macOS it is a user-local path.
+  trusted_bin="$HOME/.local/bin"
   lane_name=
   lane_mode=
   model_label=
   command_section=0
+  worker_section=0
+  first_command=1
   found_claude_wrapper=0
   found_codex_wrapper=0
   expect_lane=0
@@ -98,6 +103,28 @@ check_subscription_launch() {
       continue
     fi
 
+    # The first command may be the reviewed event adapter. Its arguments
+    # include `--format claude`; only the command after its `--` is the worker.
+    # A raw CLI as the first command is still refused.
+    if [ "$first_command" -eq 1 ]; then
+      first_command=0
+      case "$argument" in
+        "$trusted_bin/claude-subscription-worker"|"$trusted_bin/codex-subscription-worker")
+          worker_section=1
+          ;;
+        claude|*/claude|*/claude.exe)
+          printf '%s\n' 'Claude lanes may not invoke the raw Claude executable.' >&2
+          exit 78
+          ;;
+        codex|*/codex|*/codex.exe)
+          printf '%s\n' 'Codex fallback lanes may not invoke the raw Codex executable.' >&2
+          exit 78
+          ;;
+      esac
+    fi
+    if [ "$argument" = "--" ]; then worker_section=1; continue; fi
+    if [ "$worker_section" -ne 1 ]; then continue; fi
+
     if [ "$expect_role" -eq 1 ]; then
       worker_role=$argument
       expect_role=0
@@ -115,10 +142,10 @@ check_subscription_launch() {
     fi
 
     case "$argument" in
-      /home/vscode/.local/bin/claude-subscription-worker)
+      "$trusted_bin/claude-subscription-worker")
         found_claude_wrapper=1
         ;;
-      /home/vscode/.local/bin/codex-subscription-worker)
+      "$trusted_bin/codex-subscription-worker")
         found_codex_wrapper=1
         ;;
       --role)
@@ -152,7 +179,7 @@ check_subscription_launch() {
   case "$lane_name" in
     claude)
       if [ "$found_claude_wrapper" -ne 1 ] || [ "$found_codex_wrapper" -ne 0 ]; then
-        printf '%s\n' 'Claude lanes require /home/vscode/.local/bin/claude-subscription-worker.' >&2
+        printf 'Claude lanes require %s/claude-subscription-worker.\n' "$trusted_bin" >&2
         exit 78
       fi
       case "$lane_mode:$worker_role" in
@@ -171,7 +198,7 @@ check_subscription_launch() {
       ;;
     codex-subscription-fallback)
       if [ "$found_codex_wrapper" -ne 1 ] || [ "$found_claude_wrapper" -ne 0 ]; then
-        printf '%s\n' 'Codex fallback lanes require /home/vscode/.local/bin/codex-subscription-worker.' >&2
+        printf 'Codex fallback lanes require %s/codex-subscription-worker.\n' "$trusted_bin" >&2
         exit 78
       fi
       case "$lane_mode:$worker_role" in
